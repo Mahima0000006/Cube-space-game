@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Cube Dash</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            background: #000;
+        }
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            color: #fff;
+        }
+        #score {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            text-shadow: 0 0 10px #0ff, 0 0 20px #0ff;
+            font-weight: bold;
+        }
+        #highScore {
+            position: absolute;
+            top: 50px;
+            left: 20px;
+            font-size: 16px;
+            text-shadow: 0 0 10px #f0f, 0 0 20px #f0f;
+        }
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 40px;
+            border-radius: 20px;
+            border: 2px solid #0ff;
+            box-shadow: 0 0 30px #0ff;
+        }
+        #gameOver h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px #f0f;
+        }
+        #gameOver button {
+            pointer-events: all;
+            font-size: 24px;
+            padding: 15px 40px;
+            margin: 10px;
+            background: linear-gradient(45deg, #0ff, #f0f);
+            border: none;
+            border-radius: 10px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        #gameOver button:hover {
+            transform: scale(1.1);
+        }
+        #powerUp {
+            position: absolute;
+            top: 90px;
+            left: 20px;
+            font-size: 18px;
+            text-shadow: 0 0 10px #ff0;
+            display: none;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            font-size: 14px;
+            opacity: 0.7;
+        }
+        #mobileControls {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            justify-content: space-around;
+            pointer-events: all;
+        }
+        .mobileBtn {
+            width: 80px;
+            height: 80px;
+            background: rgba(0, 255, 255, 0.3);
+            border: 2px solid #0ff;
+            border-radius: 50%;
+            font-size: 24px;
+            color: #0ff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            touch-action: manipulation;
+        }
+        @media (max-width: 768px) {
+            #mobileControls {
+                display: flex;
+            }
+            #instructions {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameCanvas"></div>
+    <div id="ui">
+        <div id="score">SCORE: 0</div>
+        <div id="highScore">HIGH SCORE: 0</div>
+        <div id="powerUp">⚡ SPEED BOOST!</div>
+        <div id="gameOver">
+            <h1>GAME OVER</h1>
+            <p id="finalScore">Score: 0</p>
+            <button onclick="restartGame()">RESTART</button>
+        </div>
+        <div id="instructions">
+            Desktop: Arrow Keys/WASD to move • SPACE/UP to jump<br>
+            Mobile: Swipe to move • Tap to jump
+        </div>
+        <div id="mobileControls">
+            <button class="mobileBtn" id="leftBtn">←</button>
+            <button class="mobileBtn" id="jumpBtn">↑</button>
+            <button class="mobileBtn" id="rightBtn">→</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Game variables
+        let scene, camera, renderer, player, tunnel;
+        let obstacles = [], stars = [], particles = [];
+        let gameState = {
+            score: 0,
+            highScore: 0,
+            speed: 0.5,
+            baseSpeed: 0.5,
+            distance: 0,
+            combo: 0,
+            isGameOver: false,
+            isPowerUp: false,
+            powerUpTimer: 0,
+            starCollectCount: 0,
+            hasRainbowTrail: false
+        };
+        
+        let playerVelocity = { x: 0, y: 0, z: 0 };
+        let keys = { left: false, right: false, up: false, down: false };
+        let touchStartX = 0, touchStartY = 0;
+        
+        // Audio context
+        let audioCtx, masterGain;
+
+        // Initialize game
+        function init() {
+            // Load high score
+            const saved = localStorage.getItem('cosmicCubeDashHighScore');
+            if (saved) {
+                gameState.highScore = parseInt(saved);
+                document.getElementById('highScore').textContent = `HIGH SCORE: ${gameState.highScore}`;
+            }
+
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000033, 0.015);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 3, 8);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000033);
+            document.getElementById('gameCanvas').appendChild(renderer.domElement);
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+            scene.add(ambientLight);
+            
+            const pointLight = new THREE.PointLight(0x00ffff, 1, 100);
+            pointLight.position.set(0, 5, 10);
+            scene.add(pointLight);
+
+            const pointLight2 = new THREE.PointLight(0xff00ff, 1, 100);
+            pointLight2.position.set(0, -5, 10);
+            scene.add(pointLight2);
+
+            // Create starry background
+            createStarField();
+
+            // Create player (glowing blue cube)
+            const playerGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const playerMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00aaff,
+                emissive: 0x0088ff,
+                shininess: 100
+            });
+            player = new THREE.Mesh(playerGeometry, playerMaterial);
+            player.position.set(0, 0, 0);
+            scene.add(player);
+
+            // Create tunnel
+            createTunnel();
+
+            // Event listeners
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            window.addEventListener('resize', onWindowResize);
+            
+            // Touch controls
+            renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+            renderer.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+            renderer.domElement.addEventListener('touchend', onTouchEnd, { passive: false });
+            
+            // Mobile buttons
+            document.getElementById('leftBtn').addEventListener('touchstart', () => keys.left = true);
+            document.getElementById('leftBtn').addEventListener('touchend', () => keys.left = false);
+            document.getElementById('rightBtn').addEventListener('touchstart', () => keys.right = true);
+            document.getElementById('rightBtn').addEventListener('touchend', () => keys.right = false);
+            document.getElementById('jumpBtn').addEventListener('touchstart', jump);
+
+            // Audio setup
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                masterGain = audioCtx.createGain();
+                masterGain.gain.value = 0.3;
+                masterGain.connect(audioCtx.destination);
+                playBackgroundMusic();
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+
+            // Start game loop
+            animate();
+        }
+
+        function createStarField() {
+            const starGeometry = new THREE.BufferGeometry();
+            const starVertices = [];
+            
+            for (let i = 0; i < 3000; i++) {
+                const x = (Math.random() - 0.5) * 200;
+                const y = (Math.random() - 0.5) * 200;
+                const z = (Math.random() - 0.5) * 200;
+                starVertices.push(x, y, z);
+            }
+            
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3 });
+            const starField = new THREE.Points(starGeometry, starMaterial);
+            scene.add(starField);
+        }
+
+        function createTunnel() {
+            const tunnelGroup = new THREE.Group();
+            
+            for (let i = 0; i < 50; i++) {
+                const ringGeometry = new THREE.TorusGeometry(12, 0.3, 8, 32);
+                const ringMaterial = new THREE.MeshPhongMaterial({
+                    color: Math.random() > 0.5 ? 0x00ffff : 0xff00ff,
+                    emissive: Math.random() > 0.5 ? 0x008888 : 0x880088,
+                    wireframe: Math.random() > 0.7
+                });
+                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                ring.position.z = -i * 5;
+                ring.rotation.x = Math.PI / 2;
+                tunnelGroup.add(ring);
+            }
+            
+            tunnel = tunnelGroup;
+            scene.add(tunnel);
+        }
+
+        function spawnObstacle() {
+            if (Math.random() > 0.3) return;
+            
+            const size = 0.5 + Math.random() * 1.5;
+            const geometry = new THREE.DodecahedronGeometry(size);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xff0000,
+                emissive: 0x880000,
+                shininess: 100
+            });
+            const obstacle = new THREE.Mesh(geometry, material);
+            
+            const lane = Math.floor(Math.random() * 5) - 2;
+            obstacle.position.set(lane * 2.5, Math.random() * 3 - 1, -50);
+            obstacle.userData = { 
+                rotationSpeed: (Math.random() - 0.5) * 0.1,
+                type: 'obstacle'
+            };
+            
+            scene.add(obstacle);
+            obstacles.push(obstacle);
+        }
+
+        function spawnStar() {
+            if (Math.random() > 0.15) return;
+            
+            const geometry = new THREE.SphereGeometry(0.4, 8, 8);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xffff00,
+                emissive: 0xffaa00,
+                shininess: 100
+            });
+            const star = new THREE.Mesh(geometry, material);
+            
+            const lane = Math.floor(Math.random() * 5) - 2;
+            star.position.set(lane * 2.5, Math.random() * 2, -50);
+            star.userData = { 
+                rotationSpeed: 0.1,
+                type: 'star'
+            };
+            
+            scene.add(star);
+            stars.push(star);
+        }
+
+        function createExplosion(position, color = 0xff0000) {
+            for (let i = 0; i < 30; i++) {
+                const geometry = new THREE.SphereGeometry(0.1);
+                const material = new THREE.MeshBasicMaterial({ color: color });
+                const particle = new THREE.Mesh(geometry, material);
+                
+                particle.position.copy(position);
+                particle.userData = {
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3
+                    ),
+                    life: 1.0
+                };
+                
+                scene.add(particle);
+                particles.push(particle);
+            }
+            
+            playSound(440, 0.1, 'sawtooth');
+        }
+
+        function createRainbowTrail() {
+            if (!gameState.hasRainbowTrail) return;
+            
+            const colors = [0xff0000, 0xff7f00, 0xffff00, 0x00ff00, 0x0000ff, 0x8b00ff];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            const geometry = new THREE.SphereGeometry(0.2);
+            const material = new THREE.MeshBasicMaterial({ color: color });
+            const particle = new THREE.Mesh(geometry, material);
+            
+            particle.position.copy(player.position);
+            particle.userData = {
+                velocity: new THREE.Vector3(0, 0, 0.1),
+                life: 0.5
+            };
+            
+            scene.add(particle);
+            particles.push(particle);
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.position.add(particle.userData.velocity);
+                particle.userData.life -= 0.02;
+                particle.material.opacity = particle.userData.life;
+                particle.material.transparent = true;
+                
+                if (particle.userData.life <= 0) {
+                    scene.remove(particle);
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function checkCollisions() {
+            const playerBox = new THREE.Box3().setFromObject(player);
+            
+            // Check obstacle collisions
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                const obstacleBox = new THREE.Box3().setFromObject(obstacle);
+                
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    gameOver();
+                    createExplosion(player.position, 0xff0000);
+                    return;
+                }
+                
+                // Remove obstacles that passed
+                if (obstacle.position.z > 10) {
+                    scene.remove(obstacle);
+                    obstacles.splice(i, 1);
+                }
+            }
+            
+            // Check star collisions
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const star = stars[i];
+                const starBox = new THREE.Box3().setFromObject(star);
+                
+                if (playerBox.intersectsBox(starBox)) {
+                    collectStar(star);
+                    scene.remove(star);
+                    stars.splice(i, 1);
+                }
+                
+                // Remove stars that passed
+                if (star.position.z > 10) {
+                    scene.remove(star);
+                    stars.splice(i, 1);
+                }
+            }
+        }
+
+        function collectStar(star) {
+            gameState.combo++;
+            gameState.starCollectCount++;
+            gameState.score += 10 * gameState.combo;
+            
+            createExplosion(star.position, 0xffff00);
+            playSound(880, 0.1, 'sine');
+            
+            // Single star: speed boost
+            if (gameState.starCollectCount === 1) {
+                activatePowerUp('speed');
+            }
+            
+            // Three stars in a row: rainbow trail
+            if (gameState.starCollectCount >= 3) {
+                activatePowerUp('rainbow');
+                gameState.starCollectCount = 0;
+            }
+            
+            updateScore();
+        }
+
+        function activatePowerUp(type) {
+            if (type === 'speed') {
+                gameState.isPowerUp = true;
+                gameState.powerUpTimer = 3;
+                gameState.speed = gameState.baseSpeed * 1.5;
+                document.getElementById('powerUp').style.display = 'block';
+                document.getElementById('powerUp').textContent = '⚡ SPEED BOOST!';
+                playSound(1200, 0.2, 'square');
+            } else if (type === 'rainbow') {
+                gameState.hasRainbowTrail = true;
+                gameState.powerUpTimer = 5;
+                document.getElementById('powerUp').style.display = 'block';
+                document.getElementById('powerUp').textContent = '🌈 RAINBOW TRAIL!';
+                playSound(1400, 0.2, 'sine');
+            }
+        }
+
+        function updatePowerUps(delta) {
+            if (gameState.isPowerUp || gameState.hasRainbowTrail) {
+                gameState.powerUpTimer -= delta;
+                
+                if (gameState.powerUpTimer <= 0) {
+                    if (gameState.isPowerUp) {
+                        gameState.isPowerUp = false;
+                        gameState.speed = gameState.baseSpeed;
+                    }
+                    if (gameState.hasRainbowTrail) {
+                        gameState.hasRainbowTrail = false;
+                    }
+                    document.getElementById('powerUp').style.display = 'none';
+                }
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('score').textContent = `SCORE: ${Math.floor(gameState.score)}`;
+            
+            if (gameState.score > gameState.highScore) {
+                gameState.highScore = Math.floor(gameState.score);
+                localStorage.setItem('cosmicCubeDashHighScore', gameState.highScore.toString());
+                document.getElementById('highScore').textContent = `HIGH SCORE: ${gameState.highScore}`;
+            }
+        }
+
+        function gameOver() {
+            if (gameState.isGameOver) return;
+            
+            gameState.isGameOver = true;
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalScore').textContent = `Score: ${Math.floor(gameState.score)}`;
+            playSound(220, 0.5, 'sawtooth');
+        }
+
+        function restartGame() {
+            // Reset game state
+            gameState.score = 0;
+            gameState.speed = gameState.baseSpeed;
+            gameState.distance = 0;
+            gameState.combo = 0;
+            gameState.isGameOver = false;
+            gameState.isPowerUp = false;
+            gameState.hasRainbowTrail = false;
+            gameState.starCollectCount = 0;
+            
+            // Reset player
+            player.position.set(0, 0, 0);
+            playerVelocity = { x: 0, y: 0, z: 0 };
+            
+            // Clear obstacles and stars
+            obstacles.forEach(obj => scene.remove(obj));
+            stars.forEach(obj => scene.remove(obj));
+            particles.forEach(obj => scene.remove(obj));
+            obstacles = [];
+            stars = [];
+            particles = [];
+            
+            // Reset UI
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('powerUp').style.display = 'none';
+            updateScore();
+        }
+
+        function jump() {
+            if (player.position.y <= 0.5 && playerVelocity.y <= 0) {
+                playerVelocity.y = 0.3;
+                playSound(600, 0.1, 'sine');
+            }
+        }
+
+        function updatePlayer(delta) {
+            // Horizontal movement
+            const moveSpeed = 0.2;
+            if (keys.left) playerVelocity.x = -moveSpeed;
+            else if (keys.right) playerVelocity.x = moveSpeed;
+            else playerVelocity.x *= 0.9;
+            
+            // Vertical movement (gravity)
+            playerVelocity.y -= 0.02;
+            
+            // Update position
+            player.position.x += playerVelocity.x;
+            player.position.y += playerVelocity.y;
+            
+            // Boundaries
+            player.position.x = Math.max(-8, Math.min(8, player.position.x));
+            
+            // Ground collision
+            if (player.position.y <= 0) {
+                player.position.y = 0;
+                playerVelocity.y = 0;
+            }
+            
+            // Ceiling
+            if (player.position.y > 4) {
+                player.position.y = 4;
+                playerVelocity.y = 0;
+            }
+            
+            // Rotate player
+            player.rotation.x += 0.05;
+            player.rotation.y += 0.03;
+        }
+
+        function updateWorld() {
+            // Move tunnel
+            tunnel.children.forEach(ring => {
+                ring.position.z += gameState.speed;
+                if (ring.position.z > 10) {
+                    ring.position.z -= 250;
+                }
+            });
+            
+            // Move and rotate obstacles
+            obstacles.forEach(obstacle => {
+                obstacle.position.z += gameState.speed;
+                obstacle.rotation.x += obstacle.userData.rotationSpeed;
+                obstacle.rotation.y += obstacle.userData.rotationSpeed;
+            });
+            
+            // Move and rotate stars
+            stars.forEach(star => {
+                star.position.z += gameState.speed;
+                star.rotation.y += star.userData.rotationSpeed;
+            });
+            
+            // Update distance and score
+            gameState.distance += gameState.speed;
+            gameState.score += gameState.speed * 0.1;
+            
+            // Increase difficulty
+            gameState.baseSpeed = 0.5 + gameState.distance * 0.0001;
+            if (!gameState.isPowerUp) {
+                gameState.speed = gameState.baseSpeed;
+            }
+        }
+
+        function updateCamera() {
+            // Pulsing follow effect
+            const targetZ = player.position.z + 8 + Math.sin(Date.now() * 0.001) * 0.5;
+            const targetY = player.position.y + 3;
+            
+            camera.position.z += (targetZ - camera.position.z) * 0.05;
+            camera.position.y += (targetY - camera.position.y) * 0.05;
+            camera.lookAt(player.position);
+        }
+
+        function animate() {
+            if (gameState.isGameOver) {
+                requestAnimationFrame(animate);
+                return;
+            }
+            
+            requestAnimationFrame(animate);
+            
+            const delta = 0.016;
+            
+            updatePlayer(delta);
+            updateWorld();
+            updateCamera();
+            updateParticles();
+            updatePowerUps(delta);
+            checkCollisions();
+            
+            // Spawn new objects
+            if (Math.random() < 0.05) spawnObstacle();
+            if (Math.random() < 0.03) spawnStar();
+            
+            // Create rainbow trail
+            if (gameState.hasRainbowTrail && Math.random() < 0.3) {
+                createRainbowTrail();
+            }
+            
+            updateScore();
+            renderer.render(scene, camera);
+        }
+
+        // Audio functions
+        function playSound(frequency, duration, type = 'sine') {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(masterGain);
+            
+            oscillator.frequency.value = frequency;
+            oscillator.type = type;
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playBackgroundMusic() {
+            if (!audioCtx) return;
+            
+            const notes = [261.63, 293.66, 329.63, 392.00, 440.00];
+            let noteIndex = 0;
+            
+            setInterval(() => {
+                if (!gameState.isGameOver) {
+                    playSound(notes[noteIndex % notes.length], 0.2, 'triangle');
+                    noteIndex++;
+                }
+            }, 800);
+        }
+
+        // Event handlers
+        function onKeyDown(e) {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+            if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') jump();
+        }
+
+        function onKeyUp(e) {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+        }
+
+        function onTouchStart(e) {
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        }
+
+        function onTouchMove(e) {
+            e.preventDefault();
+            if (!touchStartX) return;
+            
+            const deltaX = e.touches[0].clientX - touchStartX;
+            const deltaY = e.touches[0].clientY - touchStartY;
+            
+            if (Math.abs(deltaX) > 30) {
+                keys.left = deltaX < 0;
+                keys.right = deltaX > 0;
+            }
+            
+            if (deltaY < -50) {
+                jump();
+                touchStartY = e.touches[0].clientY;
+            }
+        }
+
+        function onTouchEnd(e) {
+            e.preventDefault();
+            keys.left = false;
+            keys.right = false;
+            touchStartX = 0;
+            touchStartY = 0;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start the game
+        init();
+    </script>
+</body>
+</html>
